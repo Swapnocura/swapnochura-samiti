@@ -47,3 +47,23 @@ GitHub-এ `firestore.rules` আপলোড করলেই Firebase Rules ব�
 
 ## সতর্কতা
 এটি এখনও MVP; লাইভ Firebase-এ পূর্ণ end-to-end পরীক্ষা বা স্বাধীন আর্থিক নিরীক্ষা হয়নি। বাস্তব আর্থিক লেনদেনের আগে পরীক্ষামূলক তথ্য দিয়ে সব অনুমতি, অনুমোদন, ব্যালেন্স ও রিপোর্ট যাচাই করুন। Rules পরিবর্তনের পর কর্মীদের permission ও বিদ্যমান `users/{uid}` প্রোফাইলও যাচাই করুন।
+
+## নতুন পরিকল্পিত ফিচারসমূহ (অক্টোবর ২০২৬ বিল্ড)
+
+এই বিল্ডে বর্তমান অ্যাপের ওপর গ্রাম ব্যবস্থাপনা, সদস্য NID ও পিতা/স্বামীর নাম, সদস্য গ্রাম স্থানান্তর, পণ্য গ্রুপ ও ব্র্যান্ড, পণ্য বারকোড ও ন্যূনতম স্টক সতর্কতা, বিক্রয় রিটার্ন, কাস্টমার সার্ভিসিং, কর্মী বেতন এন্ট্রি, তারিখভিত্তিক কিছু রিপোর্ট এবং ড্যাশবোর্ডে ঋণ/বিক্রয় সারাংশ যোগ করা হয়েছে। পণ্য বিক্রিতে পণ্য কোড মেলানো হলে স্টক কমে এবং পুনরায় বিক্রয়যোগ্য রিটার্নে স্টক বাড়ে।
+
+### আপডেট করার আগে জরুরি
+1. লাইভ সাইট রিপ্লেস করার আগে পুরো রিপোজিটরি এবং Firebase/Firestore ডেটার আলাদা ব্যাকআপ নিন।
+2. `firestore.rules`-এ নতুন `villages`, `productGroups`, `brands`, `returns`, `serviceEntries`, `payroll` collection-এর নিয়ম যোগ করা হয়েছে। Firebase Console → Firestore Database → Rules-এ নিয়মগুলো পর্যালোচনা করে Publish করতে হবে, নইলে নতুন স্ক্রিনে permission error হতে পারে।
+3. প্রথমে আলাদা টেস্ট কপি/টেস্ট Firebase-এ যাচাই করুন। সরাসরি লাইভ রিপ্লেস করলে ভুল হিসাব বা permission সমস্যা হতে পারে।
+4. নতুন `villages` collection-এ গ্রাম তৈরি করে তারপর সদস্য যোগ করুন; পুরোনো সদস্যদের village মান আগে থেকেই টেক্সট হিসেবে থাকলে সেগুলো স্বয়ংক্রিয়ভাবে village collection-এ তৈরি হবে না।
+
+### পরীক্ষার সীমা
+এই ZIP-এর JavaScript syntax পরীক্ষা করা হয়েছে, কিন্তু বাস্তব Firebase প্রজেক্টে লগইন, Firestore Rules, হিসাবের সব পরিস্থিতি, বারকোড স্ক্যানার, প্রিন্টার, মোবাইল/PWA বা লাইভ ডেটা দিয়ে end-to-end পরীক্ষা করা হয়নি। বিশেষ করে পুরোনো কালেকশন ডেটায় `loanNo` না থাকলে ড্যাশবোর্ডের বকেয়া ঋণের অঙ্ককে যাচাই ছাড়া চূড়ান্ত হিসাব হিসেবে ব্যবহার করবেন না।
+
+
+## Corrected build (2026-10-09)
+
+This package includes targeted fixes: daily collection sheet defaults to all members, daily approved savings/loan collection amounts are rendered and totaled, and sale creation plus stock decrement are performed in a Firestore transaction. Sales now preserve the product cost snapshot for later reporting, and the date-range sales report includes an invoice print action.
+
+Validation performed for this package: JavaScript module syntax check and static checks only. No live Firebase credentials/session were available, so live login, Firestore rules, concurrent user behavior, PWA installation, and accounting reconciliation have not been end-to-end tested. This is not yet a guarantee that every requested feature is complete. Back up the current project and Firestore data before deployment.

@@ -28,6 +28,12 @@ service cloud.firestore {
     match /sales/{id} { allow read, write: if hasPermission('sale') || hasPermission('loans') || hasPermission('reports'); }
     match /loans/{id} { allow read, write: if hasPermission('loans') || hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('members') || hasPermission('statement'); }
     match /collections/{id} { allow read, write: if hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('statement') || hasPermission('members'); }
+    match /villages/{id} { allow read, write: if hasPermission('villages') || hasPermission('members') || hasPermission('reports'); }
+    match /productGroups/{id} { allow read, write: if hasPermission('productGroups') || hasPermission('products'); }
+    match /brands/{id} { allow read, write: if hasPermission('brands') || hasPermission('products'); }
+    match /returns/{id} { allow read, write: if hasPermission('returns') || hasPermission('sale') || hasPermission('reports'); }
+    match /serviceEntries/{id} { allow read, write: if hasPermission('service') || hasPermission('reports'); }
+    match /payroll/{id} { allow read, write: if hasPermission('payroll') || hasPermission('reports'); }
     match /{document=**} { allow read, write: if false; }
   }
 }
