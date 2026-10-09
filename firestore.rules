@@ -10,7 +10,18 @@ service cloud.firestore {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list, create, update, delete: if isAdmin();
     }
-    match /members/{id} { allow read, write: if hasPermission('members') || hasPermission('passbook'); }
+
+    // Automatic member serial-number counter. Admins and staff with member permission can use it.
+    match /counters/{id} {
+      allow read, write: if (id == 'members' && hasPermission('members')) || (id == 'loans' && hasPermission('loans'));
+    }
+
+    // Members can be read by modules that need member-number lookup; only member managers can edit records.
+    match /members/{id} {
+      allow read: if hasPermission('members') || hasPermission('passbook') || hasPermission('savingsAccount') || hasPermission('deposit') || hasPermission('refund') || hasPermission('sale') || hasPermission('loans') || hasPermission('collection') || hasPermission('reports');
+      allow create, update, delete: if hasPermission('members');
+    }
+
     match /savingsAccounts/{id} { allow read, write: if hasPermission('savingsAccount'); }
     match /savingsTransactions/{id} {
       allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('reports') || hasPermission('approvals');
@@ -21,9 +32,20 @@ service cloud.firestore {
     match /refundRequests/{id} { allow read, write: if hasPermission('refund') || hasPermission('approvals'); }
     match /products/{id} { allow read, write: if hasPermission('products'); }
     match /purchases/{id} { allow read, write: if hasPermission('purchase'); }
-    match /sales/{id} { allow read, write: if hasPermission('sale'); }
-    match /loans/{id} { allow read, write: if hasPermission('loans'); }
-    match /collections/{id} { allow read, write: if hasPermission('collection') || hasPermission('reports'); }
+    match /sales/{id} {
+      allow read: if hasPermission('sale') || hasPermission('loans');
+      allow create, update, delete: if hasPermission('sale');
+    }
+    match /loans/{id} {
+      allow read: if hasPermission('loans') || hasPermission('reports') || hasPermission('collection');
+      allow create, update, delete: if hasPermission('loans');
+    }
+    match /collections/{id} {
+      allow read: if hasPermission('collection') || hasPermission('reports') || hasPermission('approvals');
+      allow create: if isAdmin() || (hasPermission('collection') && request.resource.data.status == 'pending');
+      allow update: if isAdmin() || (hasPermission('collection') && resource.data.status == 'pending' && request.resource.data.status == 'pending');
+      allow delete: if isAdmin();
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }
