@@ -10,42 +10,24 @@ service cloud.firestore {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list, create, update, delete: if isAdmin();
     }
-
-    // Automatic member serial-number counter. Admins and staff with member permission can use it.
-    match /counters/{id} {
-      allow read, write: if (id == 'members' && hasPermission('members')) || (id == 'loans' && hasPermission('loans'));
-    }
-
-    // Members can be read by modules that need member-number lookup; only member managers can edit records.
     match /members/{id} {
-      allow read: if hasPermission('members') || hasPermission('passbook') || hasPermission('savingsAccount') || hasPermission('deposit') || hasPermission('refund') || hasPermission('sale') || hasPermission('loans') || hasPermission('collection') || hasPermission('reports');
-      allow create, update, delete: if hasPermission('members');
-    }
-
-    match /savingsAccounts/{id} { allow read, write: if hasPermission('savingsAccount'); }
-    match /savingsTransactions/{id} {
-      allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('reports') || hasPermission('approvals');
-    }
-    match /savingsBalances/{id} {
-      allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('approvals');
-    }
-    match /refundRequests/{id} { allow read, write: if hasPermission('refund') || hasPermission('approvals'); }
-    match /products/{id} { allow read, write: if hasPermission('products'); }
-    match /purchases/{id} { allow read, write: if hasPermission('purchase'); }
-    match /sales/{id} {
-      allow read: if hasPermission('sale') || hasPermission('loans');
-      allow create, update, delete: if hasPermission('sale');
-    }
-    match /loans/{id} {
-      allow read: if hasPermission('loans') || hasPermission('reports') || hasPermission('collection');
-      allow create, update, delete: if hasPermission('loans');
-    }
-    match /collections/{id} {
-      allow read: if hasPermission('collection') || hasPermission('reports') || hasPermission('approvals');
-      allow create: if isAdmin() || (hasPermission('collection') && request.resource.data.status == 'pending');
-      allow update: if isAdmin() || (hasPermission('collection') && resource.data.status == 'pending' && request.resource.data.status == 'pending');
+      allow read, create, update: if hasPermission('members') || hasPermission('passbook') || hasPermission('collection') || hasPermission('reports') || hasPermission('statement');
       allow delete: if isAdmin();
     }
+    match /counters/{id} { allow read, write: if isAdmin() || hasPermission('members') || hasPermission('loans'); }
+    match /savingsAccounts/{id} { allow read, write: if hasPermission('savingsAccount'); }
+    match /savingsTransactions/{id} {
+      allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('reports') || hasPermission('approvals') || hasPermission('dailySheet') || hasPermission('collection') || hasPermission('members') || hasPermission('statement');
+    }
+    match /savingsBalances/{id} {
+      allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('approvals') || hasPermission('reports') || hasPermission('dailySheet');
+    }
+    match /refundRequests/{id} { allow read, write: if hasPermission('refund') || hasPermission('approvals'); }
+    match /products/{id} { allow read: if hasPermission('products') || hasPermission('purchase') || hasPermission('sale') || hasPermission('loans'); allow write: if hasPermission('products'); }
+    match /purchases/{id} { allow read, write: if hasPermission('purchase'); }
+    match /sales/{id} { allow read, write: if hasPermission('sale') || hasPermission('loans') || hasPermission('reports'); }
+    match /loans/{id} { allow read, write: if hasPermission('loans') || hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('members') || hasPermission('statement'); }
+    match /collections/{id} { allow read, write: if hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('statement') || hasPermission('members'); }
     match /{document=**} { allow read, write: if false; }
   }
 }
