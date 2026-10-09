@@ -3,7 +3,8 @@
 ## প্যাকেজে থাকা ফাইল
 - `index.html`: আগের নকশা অপরিবর্তিত রেখে Admin/কর্মী প্যানেলের আপডেট।
 - `firestore.rules`: সদস্য ও ঋণ নম্বর কাউন্টার, কালেকশন অনুমোদন এবং রিপোর্টের জন্য Firestore নিরাপত্তা নিয়ম।
-- `README.md`: ইনস্টল ও পরীক্ষার নির্দেশনা।
+- `README.md`: ইনস্টল, লগইন পরিবর্তন, Firebase Rules এবং পরীক্ষার নির্দেশনা।
+- `logo.png`, `manifest.webmanifest`, `sw.js`: বর্তমান লোগো ও PWA ফাইল (অক্ষত রাখা হয়েছে)।
 
 ## নতুন/আপডেট ফিচার
 - সদস্য নম্বর স্বয়ংক্রিয়ভাবে `01`, `02`, ... `99`, `100` ইত্যাদি হবে। আগের সদস্য থাকলে তার সর্বোচ্চ নম্বরের পরের নম্বর নেবে। নম্বর তৈরি Firestore transaction/counter দিয়ে করা হয়, যাতে একই সময়ে একাধিক সদস্য তৈরি হলেও নতুন অ্যাপের মধ্যে সিরিয়াল সংঘর্ষ কমে। পুরোনো নম্বরের শুরুতে অতিরিক্ত শূন্য থাকলে lookup তা স্বাভাবিক করে।
@@ -16,11 +17,23 @@
 ## GitHub আপলোড
 1. ZIP Extract করুন।
 2. `index.html`, `firestore.rules`, `README.md` GitHub Repository root-এ upload/replace করুন।
-3. আগে থেকে আপলোড করা `logo.png` root-এ রাখুন; ZIP-এ লোগো অন্তর্ভুক্ত নেই এবং এটি মুছবেন না।
-4. GitHub Pages deployment শেষ হলে `https://swapnocura.github.io/swapnochura-samiti/` খুলুন।
+3. ZIP-এর `logo.png`, `manifest.webmanifest`, `sw.js`-সহ সব ফাইল একই root-এ রাখুন। লোগো বা PWA ফাইল মুছবেন না।
+4. GitHub Pages deployment শেষ হলে `https://swapnochura-samiti.github.io/` খুলুন।
+
+## প্রথমবার Admin ইউজারনেম চালু করা
+1. বর্তমান Admin লগইন দিয়ে সাইট খুলুন।
+2. **সেটিংস → অ্যাডমিন ইউজারনেম সেটআপ**-এ `swapnochura.com`-এর জন্য নতুন পাসওয়ার্ড দিন এবং নিশ্চিত করুন।
+3. সফল হলে সিস্টেম লগআউট করবে। এরপর ইউজারনেম `swapnochura.com` এবং নতুন পাসওয়ার্ড দিয়ে লগইন করুন।
+4. সেটআপের আগে নিশ্চিত করুন Firebase Authentication-এ `swapnochura.com@login.swapnochura.com` নামে অ্যাকাউন্ট আগে থেকে নেই।
 
 ## Firebase Rules Publish
 GitHub-এ `firestore.rules` আপলোড করলেই Firebase Rules বদলায় না। Firebase Console → `swapnochura-samiti` → Firestore Database → Rules-এ নতুন `firestore.rules`-এর সম্পূর্ণ লেখা বসিয়ে Publish করুন। Rules পরিবর্তনের আগে পুরোনো Rules-এর কপি রাখুন।
+
+## কর্মী অ্যাকাউন্ট ও নিরাপত্তা
+- কর্মী তৈরি/সক্রিয়/নিষ্ক্রিয় করতে Admin হিসেবে **সেটিংস** খুলুন।
+- কর্মী নিষ্ক্রিয় করলে অ্যাপ থেকে বের করে দেওয়া হয় এবং আপডেট করা Rules অনুযায়ী ডেটা পড়া/লেখা বন্ধ হয়। এটি Firebase Authentication account মুছে দেয় না; এটি অ্যাপের Firestore অ্যাক্সেস বন্ধ করে।
+- `firestore.rules`-এর সম্পূর্ণ লেখা Firebase Console-এ Publish করা জরুরি। শুধু GitHub-এ ফাইল বদলালে নিরাপত্তা নিয়ম কার্যকর হবে না।
+- এটি বিনামূল্যের Firebase Auth + Firestore ব্যবস্থার ক্লায়েন্ট-সাইড অ্যাকাউন্ট তৈরি; Cloud Functions যোগ করা হয়নি। Firebase-এর বর্তমান free quota/নীতি প্রযোজ্য।
 
 ## পরীক্ষার ক্রম
 1. Admin লগইন এবং Dashboard খুলছে কি না।

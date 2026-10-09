@@ -1,5 +1,5 @@
 /* Swapnochura Samiti PWA service worker; GitHub Pages subpath-safe. */
-const CACHE_NAME = 'swapnochura-samiti-pwa-v3';
+const CACHE_NAME = 'swapnochura-samiti-pwa-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './logo.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

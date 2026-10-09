@@ -3,8 +3,8 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return signedIn() && profile().role == 'admin'; }
-    function hasPermission(key) { return signedIn() && (isAdmin() || profile().permissions[key] == true); }
+    function isAdmin() { return signedIn() && profile().role == 'admin' && profile().active != false; }
+    function hasPermission(key) { return signedIn() && profile().active != false && (isAdmin() || profile().permissions[key] == true); }
 
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
