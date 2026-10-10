@@ -55,6 +55,10 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
     match /settings/{settingId} { allow read: if signedIn() && (isAdmin() || isActiveStaff()); allow create, update, delete: if isAdmin(); }
+    match /staffTargets/{targetId} {
+      allow read: if isAdmin() || (isActiveStaff() && resource.data.staffId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }
