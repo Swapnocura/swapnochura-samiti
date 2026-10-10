@@ -54,6 +54,7 @@ service cloud.firestore {
       allow read: if isAdmin() || isActiveStaff();
       allow create, update, delete: if isAdmin();
     }
+    match /settings/{settingId} { allow read: if signedIn() && (isAdmin() || isActiveStaff()); allow create, update, delete: if isAdmin(); }
     match /{document=**} { allow read, write: if false; }
   }
 }
