@@ -2,10 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    function profileExists() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return signedIn() && profile().role == 'admin' && profile().active != false; }
-    function isActiveStaff() { return signedIn() && profile().role == 'staff' && profile().active != false; }
-    function hasPermission(key) { return signedIn() && profile().active != false && (isAdmin() || profile().permissions[key] == true); }
+    function activeUser() { return profileExists() && profile().active != false; }
+    function isAdmin() { return activeUser() && profile().role == 'admin'; }
+    function isActiveStaff() { return activeUser() && profile().role == 'staff'; }
+    function hasPermission(key) { return activeUser() && (isAdmin() || profile().permissions[key] == true); }
 
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
@@ -38,10 +40,14 @@ service cloud.firestore {
     match /returns/{id} { allow read, write: if hasPermission('returns') || hasPermission('sale') || hasPermission('reports'); }
     match /serviceEntries/{id} { allow read, write: if hasPermission('service') || hasPermission('reports'); }
     match /payroll/{id} { allow read, write: if hasPermission('payroll') || hasPermission('reports'); }
+
     match /loanApplications/{id} {
       allow get: if isAdmin() || (isActiveStaff() && resource.data.createdBy == request.auth.uid);
       allow list: if isAdmin() || (isActiveStaff() && resource.data.createdBy == request.auth.uid);
-      allow create: if (isActiveStaff() || isAdmin()) && request.resource.data.createdBy == request.auth.uid && request.resource.data.memberNo is string && request.resource.data.applicationText is string;
+      allow create: if (isActiveStaff() || isAdmin())
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.memberNo is string
+        && request.resource.data.applicationText is string;
       allow update, delete: if isAdmin();
     }
     match /notices/{id} {
