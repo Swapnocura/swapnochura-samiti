@@ -8,6 +8,10 @@ service cloud.firestore {
     function isAdmin() { return activeUser() && profile().role == 'admin'; }
     function isActiveStaff() { return activeUser() && profile().role == 'staff'; }
     function hasPermission(key) { return activeUser() && (isAdmin() || profile().permissions[key] == true); }
+    function productPricesMigrationComplete() {
+      return exists(/databases/$(database)/documents/settings/productPricesMigration)
+        && get(/databases/$(database)/documents/settings/productPricesMigration).data.completed == true;
+    }
 
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
@@ -39,9 +43,18 @@ service cloud.firestore {
       allow read, write: if hasPermission('refund') || hasPermission('approvals');
     }
 
+    // কর্মীদের পণ্য তালিকা দেখতে migration শেষ হওয়া আবশ্যক; ততক্ষণ পণ্য পড়া বন্ধ থাকবে।
     match /products/{id} {
-      allow read: if hasPermission('products') || hasPermission('purchase') || hasPermission('sale') || hasPermission('loans');
-      allow write: if hasPermission('products');
+      allow read: if isAdmin() || (productPricesMigrationComplete() && (hasPermission('products') || hasPermission('purchase') || hasPermission('sale') || hasPermission('loans')));
+      allow create: if isAdmin();
+      // কর্মী কেবল অনুমোদিত পণ্য-স্টক সংশোধন করতে পারবে; পণ্যের অন্যান্য ফিল্ড/মূল্য নয়।
+      allow update: if isAdmin() || (hasPermission('products') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt', 'updatedBy']));
+      allow delete: if isAdmin();
+    }
+
+    // ক্রয়/বিক্রয় মূল্য আলাদা সংগ্রহে; কেবল অ্যাডমিন পড়তে/লিখতে পারবেন।
+    match /productPrices/{productId} {
+      allow read, write: if isAdmin();
     }
 
     match /purchases/{id} {
@@ -82,12 +95,10 @@ service cloud.firestore {
       allow read, write: if hasPermission('service') || hasPermission('reports');
     }
 
-    // বেতন সেটআপ: Admin (hasPermission-এ অন্তর্ভুক্ত) অথবা payroll permission
     match /salarySettings/{staffId} {
       allow read, write: if hasPermission('payroll');
     }
 
-    // পে-স্লিপ: payroll বা reports permission; Admin-ও অনুমোদিত
     match /payroll/{id} {
       allow read, write: if hasPermission('payroll') || hasPermission('reports');
     }
@@ -117,7 +128,6 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // অন্য কোনো Collection-এ ডিফল্টভাবে অ্যাক্সেস বন্ধ
     match /{document=**} {
       allow read, write: if false;
     }
