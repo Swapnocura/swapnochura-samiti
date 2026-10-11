@@ -13,33 +13,84 @@ service cloud.firestore {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list, create, update, delete: if isAdmin();
     }
+
     match /members/{id} {
       allow read, create, update: if hasPermission('members') || hasPermission('passbook') || hasPermission('collection') || hasPermission('reports') || hasPermission('statement');
       allow delete: if isAdmin();
     }
-    match /counters/{id} { allow read, write: if isAdmin() || hasPermission('members') || hasPermission('loans'); }
-    match /savingsAccounts/{id} { allow read, write: if hasPermission('savingsAccount'); }
+
+    match /counters/{id} {
+      allow read, write: if isAdmin() || hasPermission('members') || hasPermission('loans');
+    }
+
+    match /savingsAccounts/{id} {
+      allow read, write: if hasPermission('savingsAccount');
+    }
+
     match /savingsTransactions/{id} {
       allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('reports') || hasPermission('approvals') || hasPermission('dailySheet') || hasPermission('collection') || hasPermission('members') || hasPermission('statement');
     }
+
     match /savingsBalances/{id} {
       allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('approvals') || hasPermission('reports') || hasPermission('dailySheet');
     }
-    match /refundRequests/{id} { allow read, write: if hasPermission('refund') || hasPermission('approvals'); }
+
+    match /refundRequests/{id} {
+      allow read, write: if hasPermission('refund') || hasPermission('approvals');
+    }
+
     match /products/{id} {
       allow read: if hasPermission('products') || hasPermission('purchase') || hasPermission('sale') || hasPermission('loans');
       allow write: if hasPermission('products');
     }
-    match /purchases/{id} { allow read: if isAdmin() || hasPermission('purchase'); allow create, update, delete: if isAdmin(); }
-    match /sales/{id} { allow read: if hasPermission('sale') || hasPermission('loans') || hasPermission('reports') || isAdmin(); allow create, update, delete: if isAdmin(); }
-    match /loans/{id} { allow read, write: if hasPermission('loans') || hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('members') || hasPermission('statement'); }
-    match /collections/{id} { allow read, write: if hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('statement') || hasPermission('members'); }
-    match /villages/{id} { allow read, write: if hasPermission('villages') || hasPermission('members') || hasPermission('reports'); }
-    match /productGroups/{id} { allow read, write: if hasPermission('productGroups') || hasPermission('products'); }
-    match /brands/{id} { allow read, write: if hasPermission('brands') || hasPermission('products'); }
-    match /returns/{id} { allow read, write: if hasPermission('returns') || hasPermission('sale') || hasPermission('reports'); }
-    match /serviceEntries/{id} { allow read, write: if hasPermission('service') || hasPermission('reports'); }
-    match /payroll/{id} { allow read, write: if hasPermission('payroll') || hasPermission('reports'); }
+
+    match /purchases/{id} {
+      allow read: if isAdmin() || hasPermission('purchase');
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /sales/{id} {
+      allow read: if hasPermission('sale') || hasPermission('loans') || hasPermission('reports') || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /loans/{id} {
+      allow read, write: if hasPermission('loans') || hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('members') || hasPermission('statement');
+    }
+
+    match /collections/{id} {
+      allow read, write: if hasPermission('collection') || hasPermission('reports') || hasPermission('dailySheet') || hasPermission('statement') || hasPermission('members');
+    }
+
+    match /villages/{id} {
+      allow read, write: if hasPermission('villages') || hasPermission('members') || hasPermission('reports');
+    }
+
+    match /productGroups/{id} {
+      allow read, write: if hasPermission('productGroups') || hasPermission('products');
+    }
+
+    match /brands/{id} {
+      allow read, write: if hasPermission('brands') || hasPermission('products');
+    }
+
+    match /returns/{id} {
+      allow read, write: if hasPermission('returns') || hasPermission('sale') || hasPermission('reports');
+    }
+
+    match /serviceEntries/{id} {
+      allow read, write: if hasPermission('service') || hasPermission('reports');
+    }
+
+    // বেতন সেটআপ: Admin (hasPermission-এ অন্তর্ভুক্ত) অথবা payroll permission
+    match /salarySettings/{staffId} {
+      allow read, write: if hasPermission('payroll');
+    }
+
+    // পে-স্লিপ: payroll বা reports permission; Admin-ও অনুমোদিত
+    match /payroll/{id} {
+      allow read, write: if hasPermission('payroll') || hasPermission('reports');
+    }
 
     match /loanApplications/{id} {
       allow get: if isAdmin() || (isActiveStaff() && resource.data.createdBy == request.auth.uid);
@@ -50,15 +101,25 @@ service cloud.firestore {
         && request.resource.data.applicationText is string;
       allow update, delete: if isAdmin();
     }
+
     match /notices/{id} {
       allow read: if isAdmin() || isActiveStaff();
       allow create, update, delete: if isAdmin();
     }
-    match /settings/{settingId} { allow read: if signedIn() && (isAdmin() || isActiveStaff()); allow create, update, delete: if isAdmin(); }
+
+    match /settings/{settingId} {
+      allow read: if signedIn() && (isAdmin() || isActiveStaff());
+      allow create, update, delete: if isAdmin();
+    }
+
     match /staffTargets/{targetId} {
       allow read: if isAdmin() || (isActiveStaff() && resource.data.staffId == request.auth.uid);
       allow create, update, delete: if isAdmin();
     }
-    match /{document=**} { allow read, write: if false; }
+
+    // অন্য কোনো Collection-এ ডিফল্টভাবে অ্যাক্সেস বন্ধ
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }
