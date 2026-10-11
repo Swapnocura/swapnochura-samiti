@@ -4,10 +4,10 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function profileExists() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function activeUser() { return profileExists() && profile().active != false; }
+    function activeUser() { return profileExists() && profile().active == true; }
     function isAdmin() { return activeUser() && profile().role == 'admin'; }
     function isActiveStaff() { return activeUser() && profile().role == 'staff'; }
-    function hasPermission(key) { return activeUser() && (isAdmin() || profile().permissions[key] == true); }
+    function hasPermission(key) { return activeUser() && (isAdmin() || (profile().permissions != null && profile().permissions[key] == true)); }
     function productPricesMigrationComplete() {
       return exists(/databases/$(database)/documents/settings/productPricesMigration)
         && get(/databases/$(database)/documents/settings/productPricesMigration).data.completed == true;
@@ -39,20 +39,20 @@ service cloud.firestore {
       allow read, write: if hasPermission('deposit') || hasPermission('refund') || hasPermission('passbook') || hasPermission('approvals') || hasPermission('reports') || hasPermission('dailySheet');
     }
 
+    // অনুমোদন পেজ: অ্যাডমিন সব আবেদন/ফেরত-আবেদন দেখতে ও পরিচালনা করতে পারবেন।
+    // স্টাফ শুধু নিজের তৈরি loanApplications দেখতে পারবেন; স্টাফের query-তে createdBy == নিজের UID দিতে হবে।
     match /refundRequests/{id} {
-      allow read, write: if hasPermission('refund') || hasPermission('approvals');
+      allow read, write: if isAdmin() || hasPermission('refund') || hasPermission('approvals');
     }
 
-    // কর্মীদের পণ্য তালিকা দেখতে migration শেষ হওয়া আবশ্যক; ততক্ষণ পণ্য পড়া বন্ধ থাকবে।
+    // পণ্যের মূল্য আলাদা productPrices সংগ্রহে থাকবে। migration সম্পূর্ণ না হওয়া পর্যন্ত স্টাফ products পড়তে পারবেন না।
     match /products/{id} {
       allow read: if isAdmin() || (productPricesMigrationComplete() && (hasPermission('products') || hasPermission('purchase') || hasPermission('sale') || hasPermission('loans')));
       allow create: if isAdmin();
-      // কর্মী কেবল অনুমোদিত পণ্য-স্টক সংশোধন করতে পারবে; পণ্যের অন্যান্য ফিল্ড/মূল্য নয়।
       allow update: if isAdmin() || (hasPermission('products') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt', 'updatedBy']));
       allow delete: if isAdmin();
     }
 
-    // ক্রয়/বিক্রয় মূল্য আলাদা সংগ্রহে; কেবল অ্যাডমিন পড়তে/লিখতে পারবেন।
     match /productPrices/{productId} {
       allow read, write: if isAdmin();
     }
@@ -63,7 +63,7 @@ service cloud.firestore {
     }
 
     match /sales/{id} {
-      allow read: if hasPermission('sale') || hasPermission('loans') || hasPermission('reports') || isAdmin();
+      allow read: if isAdmin() || hasPermission('sale') || hasPermission('loans') || hasPermission('reports');
       allow create, update, delete: if isAdmin();
     }
 
