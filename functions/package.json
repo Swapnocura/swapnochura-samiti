@@ -1,0 +1,12 @@
+{
+  "name": "swapnochura-samiti-sms-alerts",
+  "private": true,
+  "description": "SMS-only installment reminders for Swapnochura Samiti",
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "scripts": { "serve": "firebase emulators:start --only functions", "deploy": "firebase deploy --only functions:installmentReminderScheduler", "logs": "firebase functions:log --only installmentReminderScheduler" },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.0.0"
+  }
+}
