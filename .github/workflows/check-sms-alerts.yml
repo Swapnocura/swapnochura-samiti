@@ -1,0 +1,35 @@
+
+name: Check Swapnochura SMS Functions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify required files
+        run: |
+          test -f firebase.json
+          test -f functions/index.js
+          test -f functions/package.json
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm install --no-package-lock
+
+      - name: Check JavaScript syntax
+        working-directory: functions
+        run: node --check index.js
