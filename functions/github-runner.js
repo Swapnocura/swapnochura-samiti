@@ -1,15 +1,17 @@
+
 /**
  * Swapnochura Samiti — GitHub Actions SMS Runner
  *
- * Schedule:
- * - Two days before nextInstallmentDate
- * - On nextInstallmentDate
+ * Reminders:
+ * - Two days before the installment date
+ * - On the installment date
  *
- * SMS contains no installment amount or installment count.
+ * Date priority:
+ * 1. customInstallmentDate
+ * 2. nextInstallmentDate
  *
- * Default: DRY RUN
- * Set GitHub Repository Variable SMS_ALERTS_ENABLED=true
- * only after verifying the dry-run results.
+ * Default mode: DRY RUN
+ * SMS_ALERTS_ENABLED=false means no SMS will be sent.
  */
 
 const admin = require('firebase-admin');
@@ -72,16 +74,17 @@ function validDate(key) {
   }
 
   const [year, month, day] = key.split('-').map(Number);
-
-  const date = new Date(
-    Date.UTC(year, month - 1, day)
-  );
+  const date = new Date(Date.UTC(year, month - 1, day));
 
   return (
     date.getUTCFullYear() === year &&
     date.getUTCMonth() === month - 1 &&
     date.getUTCDate() === day
   );
+}
+
+function normalizeMemberNo(value) {
+  return String(value || '').trim();
 }
 
 // --------------------------------------------------
@@ -104,7 +107,7 @@ function normalizePhone(raw) {
 
 // --------------------------------------------------
 // SMS template
-// No installment amount or count.
+// No customer name, installment amount or count.
 // --------------------------------------------------
 
 function messageFor(due) {
@@ -123,7 +126,7 @@ function messageFor(due) {
 }
 
 // --------------------------------------------------
-// Find reminders using nextInstallmentDate only
+// Load reminder candidates
 // --------------------------------------------------
 
 async function loadCandidates(today) {
@@ -132,12 +135,32 @@ async function loadCandidates(today) {
     db.collection('loans').get()
   ]);
 
-  const members = membersSnap.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data()
-  }));
+  // Index members by memberNo for reliable lookup.
+  const membersByNo = new Map();
+
+  for (const doc of membersSnap.docs) {
+    const member = doc.data();
+    const memberNo = normalizeMemberNo(member.memberNo);
+
+    if (memberNo) {
+      membersByNo.set(memberNo, {
+        id: doc.id,
+        ...member
+      });
+    }
+  }
 
   const candidates = [];
+  const diagnostics = {
+    loansRead: loansSnap.size,
+    membersRead: membersSnap.size,
+    skippedClosedStatus: 0,
+    missingInstallmentDate: 0,
+    invalidInstallmentDate: 0,
+    dateNotDueForReminder: 0,
+    memberNotFound: 0,
+    missingOrInvalidPhone: 0
+  };
 
   for (const doc of loansSnap.docs) {
     const loan = {
@@ -145,9 +168,9 @@ async function loadCandidates(today) {
       ...doc.data()
     };
 
-    const status = String(
-      loan.status || ''
-    ).toLowerCase();
+    const status = String(loan.status || '')
+      .trim()
+      .toLowerCase();
 
     if (
       [
@@ -158,16 +181,30 @@ async function loadCandidates(today) {
         'cancelled'
       ].includes(status)
     ) {
+      diagnostics.skippedClosedStatus++;
       continue;
     }
 
-    // Use the stored next installment date.
-    // No installment count or amount is calculated.
-    const due = String(
-      loan.nextInstallmentDate || ''
-    ).slice(0, 10);
+    // Prefer customInstallmentDate.
+    // Fall back to nextInstallmentDate if custom date is empty.
+    const rawDue =
+      loan.customInstallmentDate ||
+      loan.nextInstallmentDate ||
+      '';
+
+    const due = String(rawDue).trim().slice(0, 10);
+
+    if (!due) {
+      diagnostics.missingInstallmentDate++;
+      continue;
+    }
 
     if (!validDate(due)) {
+      diagnostics.invalidInstallmentDate++;
+      console.warn(
+        'Invalid installment date for loan:',
+        loan.loanNo || loan.id
+      );
       continue;
     }
 
@@ -178,13 +215,21 @@ async function loadCandidates(today) {
     } else if (due === today) {
       stage = 'due_today';
     } else {
+      diagnostics.dateNotDueForReminder++;
       continue;
     }
 
-    const member = members.find(item =>
-      String(item.memberNo || '') ===
-      String(loan.memberNo || '')
-    ) || {};
+    const memberNo = normalizeMemberNo(loan.memberNo);
+    const member = membersByNo.get(memberNo);
+
+    if (!member) {
+      diagnostics.memberNotFound++;
+      console.warn(
+        'No matching memberNo for loan:',
+        loan.loanNo || loan.id
+      );
+      continue;
+    }
 
     const phone = normalizePhone(
       loan.phone ||
@@ -195,9 +240,10 @@ async function loadCandidates(today) {
     );
 
     if (!phone) {
+      diagnostics.missingOrInvalidPhone++;
       console.warn(
-        'Skipping loan with missing/invalid phone:',
-        loan.id
+        'Missing or invalid phone for loan:',
+        loan.loanNo || loan.id
       );
       continue;
     }
@@ -205,9 +251,7 @@ async function loadCandidates(today) {
     candidates.push({
       loanId: loan.id,
       loanNo: String(loan.loanNo || loan.id),
-      memberNo: String(
-        loan.memberNo || member.memberNo || ''
-      ),
+      memberNo,
       phone,
       due,
       stage,
@@ -215,11 +259,16 @@ async function loadCandidates(today) {
     });
   }
 
+  console.log(
+    'Candidate diagnostics:',
+    JSON.stringify(diagnostics, null, 2)
+  );
+
   return candidates;
 }
 
 // --------------------------------------------------
-// SMS.BD API
+// SMS.NET.BD API
 // --------------------------------------------------
 
 async function sendSms(phone, message) {
@@ -243,7 +292,6 @@ async function sendSms(phone, message) {
   );
 
   const responseText = await response.text();
-
   let result;
 
   try {
@@ -266,7 +314,7 @@ async function sendSms(phone, message) {
 }
 
 // --------------------------------------------------
-// Duplicate prevention and logs
+// Duplicate prevention and SMS logs
 // --------------------------------------------------
 
 async function deliverOnce(candidate) {
@@ -274,19 +322,18 @@ async function deliverOnce(candidate) {
     `${encodeURIComponent(candidate.loanId)}` +
     `__${candidate.due}__${candidate.stage}`;
 
-  const ref = db
-    .collection('smsAlertLogs')
-    .doc(id);
+  const ref = db.collection('smsAlertLogs').doc(id);
 
   const reserved = await db.runTransaction(
     async transaction => {
       const snap = await transaction.get(ref);
+      const previousStatus = String(
+        snap.data()?.status || ''
+      );
 
       if (
         snap.exists &&
-        ['sent', 'sending'].includes(
-          String(snap.data().status || '')
-        )
+        ['sent', 'sending'].includes(previousStatus)
       ) {
         return false;
       }
@@ -300,8 +347,7 @@ async function deliverOnce(candidate) {
         stage: candidate.stage,
         message: candidate.message,
         status: 'sending',
-        attempts:
-          Number(snap.data()?.attempts || 0) + 1,
+        attempts: Number(snap.data()?.attempts || 0) + 1,
         updatedAt:
           admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -322,7 +368,7 @@ async function deliverOnce(candidate) {
 
     await ref.set({
       status: 'sent',
-      provider: 'sms.bd',
+      provider: 'sms.net.bd',
       requestId:
         requestId == null ? null : String(requestId),
       sentAt:
@@ -335,9 +381,7 @@ async function deliverOnce(candidate) {
   } catch (error) {
     await ref.set({
       status: 'failed',
-      error: String(
-        error.message || error
-      ).slice(0, 500),
+      error: String(error.message || error).slice(0, 500),
       updatedAt:
         admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -352,7 +396,6 @@ async function deliverOnce(candidate) {
 
 async function main() {
   const today = dateKey();
-
   const candidates = await loadCandidates(today);
 
   const enabled =
@@ -392,7 +435,6 @@ async function main() {
       }
     } catch (error) {
       failed++;
-
       console.error(
         'SMS failed for loan:',
         candidate.loanNo,
@@ -407,7 +449,7 @@ async function main() {
     sent,
     skipped,
     failed
-  }));
+  }, null, 2));
 
   if (failed > 0) {
     process.exitCode = 1;
