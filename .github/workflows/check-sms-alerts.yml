@@ -33,3 +33,44 @@ jobs:
       - name: Check JavaScript syntax
         working-directory: functions
         run: node --check index.js
+
+      - name: Test installment date calculations
+        working-directory: functions
+        run: |
+          node <<'NODE'
+          const {
+            monthlyDueDate,
+            scheduleIntervalDays
+          } = require('./index.js')._test;
+
+          const cases = [
+            ['2026-01-31', 1, '2026-02-28'],
+            ['2024-01-31', 1, '2024-02-29'],
+            ['2026-01-31', 2, '2026-03-31'],
+            ['2026-05-15', 1, '2026-06-15'],
+            ['2026-03-31', 1, '2026-04-30']
+          ];
+
+          for (const [start, offset, expected] of cases) {
+            const actual = monthlyDueDate(start, offset);
+
+            if (actual !== expected) {
+              throw new Error(
+                `${start}, offset ${offset}: expected ${expected}, got ${actual}`
+              );
+            }
+
+            console.log(`PASS: ${start} -> ${actual}`);
+          }
+
+          if (scheduleIntervalDays('weekly') !== 7) {
+            throw new Error('Weekly interval test failed');
+          }
+
+          if (scheduleIntervalDays('15-days') !== 15) {
+            throw new Error('15-days interval test failed');
+          }
+
+          console.log('PASS: Weekly and 15-day intervals');
+          console.log('All installment date tests passed.');
+          NODE
