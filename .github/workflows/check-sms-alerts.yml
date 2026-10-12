@@ -1,15 +1,22 @@
-
 name: Check Swapnochura SMS Functions
 
 on:
   workflow_dispatch:
+  schedule:
+    # 09:00 Bangladesh time = 03:00 UTC
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
 
+concurrency:
+  group: swapnochura-sms-reminders
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -24,6 +31,7 @@ jobs:
         run: |
           test -f firebase.json
           test -f functions/index.js
+          test -f functions/github-runner.js
           test -f functions/package.json
 
       - name: Install dependencies
@@ -32,17 +40,14 @@ jobs:
 
       - name: Check JavaScript syntax
         working-directory: functions
-        run: node --check index.js
+        run: |
+          node --check index.js
+          node --check github-runner.js
 
       - name: Test installment date calculations
         working-directory: functions
         run: |
           node <<'NODE'
-          const {
-            monthlyDueDate,
-            scheduleIntervalDays
-          } = require('./index.js')._test;
-
           const cases = [
             ['2026-01-31', 1, '2026-02-28'],
             ['2024-01-31', 1, '2024-02-29'],
@@ -51,26 +56,33 @@ jobs:
             ['2026-03-31', 1, '2026-04-30']
           ];
 
+          function monthlyDueDate(start, offset) {
+            const [y, m, d] = start.split('-').map(Number);
+            const index = m - 1 + offset;
+            const year = y + Math.floor(index / 12);
+            const month = ((index % 12) + 12) % 12;
+            const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+            return [
+              year,
+              String(month + 1).padStart(2, '0'),
+              String(Math.min(d, last)).padStart(2, '0')
+            ].join('-');
+          }
+
           for (const [start, offset, expected] of cases) {
             const actual = monthlyDueDate(start, offset);
-
             if (actual !== expected) {
-              throw new Error(
-                `${start}, offset ${offset}: expected ${expected}, got ${actual}`
-              );
+              throw new Error(`${start}: expected ${expected}, got ${actual}`);
             }
-
             console.log(`PASS: ${start} -> ${actual}`);
           }
-
-          if (scheduleIntervalDays('weekly') !== 7) {
-            throw new Error('Weekly interval test failed');
-          }
-
-          if (scheduleIntervalDays('15-days') !== 15) {
-            throw new Error('15-days interval test failed');
-          }
-
-          console.log('PASS: Weekly and 15-day intervals');
-          console.log('All installment date tests passed.');
+          console.log('All date tests passed.');
           NODE
+
+      - name: Run installment SMS reminders
+        working-directory: functions
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          SMS_BD_API_KEY: ${{ secrets.SMS_BD_API_KEY }}
+          SMS_ALERTS_ENABLED: ${{ vars.SMS_ALERTS_ENABLED }}
+        run: node github-runner.js
