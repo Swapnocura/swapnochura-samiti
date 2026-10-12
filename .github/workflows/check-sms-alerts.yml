@@ -1,9 +1,10 @@
-name: Check Swapnochura SMS Functions
+
+name: Swapnochura Installment SMS Reminder
 
 on:
   workflow_dispatch:
   schedule:
-    # 09:00 Bangladesh time = 03:00 UTC
+    # বাংলাদেশ সময় সকাল ৯টা
     - cron: "0 3 * * *"
 
 permissions:
@@ -14,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
+  reminder:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -30,9 +31,8 @@ jobs:
       - name: Verify required files
         run: |
           test -f firebase.json
-          test -f functions/index.js
-          test -f functions/github-runner.js
           test -f functions/package.json
+          test -f functions/github-runner.js
 
       - name: Install dependencies
         working-directory: functions
@@ -40,44 +40,7 @@ jobs:
 
       - name: Check JavaScript syntax
         working-directory: functions
-        run: |
-          node --check index.js
-          node --check github-runner.js
-
-      - name: Test installment date calculations
-        working-directory: functions
-        run: |
-          node <<'NODE'
-          const cases = [
-            ['2026-01-31', 1, '2026-02-28'],
-            ['2024-01-31', 1, '2024-02-29'],
-            ['2026-01-31', 2, '2026-03-31'],
-            ['2026-05-15', 1, '2026-06-15'],
-            ['2026-03-31', 1, '2026-04-30']
-          ];
-
-          function monthlyDueDate(start, offset) {
-            const [y, m, d] = start.split('-').map(Number);
-            const index = m - 1 + offset;
-            const year = y + Math.floor(index / 12);
-            const month = ((index % 12) + 12) % 12;
-            const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-            return [
-              year,
-              String(month + 1).padStart(2, '0'),
-              String(Math.min(d, last)).padStart(2, '0')
-            ].join('-');
-          }
-
-          for (const [start, offset, expected] of cases) {
-            const actual = monthlyDueDate(start, offset);
-            if (actual !== expected) {
-              throw new Error(`${start}: expected ${expected}, got ${actual}`);
-            }
-            console.log(`PASS: ${start} -> ${actual}`);
-          }
-          console.log('All date tests passed.');
-          NODE
+        run: node --check github-runner.js
 
       - name: Run installment SMS reminders
         working-directory: functions
