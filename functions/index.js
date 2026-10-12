@@ -1,13 +1,17 @@
-
 /**
  * Swapnochura Samiti — SMS-only installment reminders.
  *
- * Existing Firestore collections:
+ * Firestore collections:
  * members, loans, collections, smsAlertLogs
+ *
+ * SMS:
+ * - Two days before installment due date
+ * - On installment due date
+ * - No installment amount in the SMS
  *
  * SAFETY:
  * SMS_ALERTS_ENABLED defaults to false.
- * Never enable live SMS until payment and due-date logic is verified.
+ * Do not enable live SMS before testing.
  */
 
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -18,7 +22,9 @@ const admin = require('firebase-admin');
 admin.initializeApp();
 
 const db = admin.firestore();
+
 const SMS_API_KEY = defineSecret('SMS_API_KEY');
+
 const SMS_ALERTS_ENABLED = defineString('SMS_ALERTS_ENABLED', {
   default: 'false'
 });
@@ -35,15 +41,21 @@ function dhakaDateKey(date = new Date()) {
     day: '2-digit'
   }).formatToParts(date);
 
-  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+  const p = Object.fromEntries(
+    parts.map(item => [item.type, item.value])
+  );
 
   return `${p.year}-${p.month}-${p.day}`;
 }
 
 function shiftDateKey(key, days) {
-  const [y, m, d] = String(key).split('-').map(Number);
+  const [year, month, day] = String(key)
+    .split('-')
+    .map(Number);
 
-  const date = new Date(Date.UTC(y, m - 1, d + days, 12));
+  const date = new Date(
+    Date.UTC(year, month - 1, day + days, 12)
+  );
 
   return [
     date.getUTCFullYear(),
@@ -56,15 +68,11 @@ function plusDays(key, days) {
   return shiftDateKey(key, days);
 }
 
-/**
- * Monthly calendar schedule:
- * Keep the original day of month whenever possible.
- * If that day does not exist in the target month,
- * use that month's last day.
- *
- * Example:
- * Jan 31 -> Feb 28/29 -> Mar 31
- */
+// --------------------------------------------------
+// Monthly installment date helper
+// Jan 31 -> Feb 28/29 -> Mar 31
+// --------------------------------------------------
+
 function monthlyDueDate(startKey, monthOffset) {
   const [year, month, day] = String(startKey)
     .slice(0, 10)
@@ -78,14 +86,32 @@ function monthlyDueDate(startKey, monthOffset) {
     month < 1 ||
     month > 12 ||
     day < 1 ||
-    day > 31
+    day > 31 ||
+    !Number.isInteger(monthOffset) ||
+    monthOffset < 0
   ) {
-    throw new Error(`Invalid monthly start date: ${startKey}`);
+    throw new Error(`Invalid monthly date: ${startKey}`);
+  }
+
+  // Reject impossible starting dates such as February 31.
+  const actualStartDay = new Date(
+    Date.UTC(year, month - 1, day)
+  );
+
+  if (
+    actualStartDay.getUTCFullYear() !== year ||
+    actualStartDay.getUTCMonth() !== month - 1 ||
+    actualStartDay.getUTCDate() !== day
+  ) {
+    throw new Error(`Invalid calendar date: ${startKey}`);
   }
 
   const targetMonthIndex = month - 1 + monthOffset;
-  const targetYear = year + Math.floor(targetMonthIndex / 12);
-  const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const targetYear =
+    year + Math.floor(targetMonthIndex / 12);
+
+  const normalizedMonth =
+    ((targetMonthIndex % 12) + 12) % 12;
 
   const lastDay = new Date(
     Date.UTC(targetYear, normalizedMonth + 1, 0)
@@ -93,7 +119,11 @@ function monthlyDueDate(startKey, monthOffset) {
 
   const targetDay = Math.min(day, lastDay);
 
-  return `${targetYear}-${String(normalizedMonth + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+  return [
+    targetYear,
+    String(normalizedMonth + 1).padStart(2, '0'),
+    String(targetDay).padStart(2, '0')
+  ].join('-');
 }
 
 function scheduleIntervalDays(type) {
@@ -109,12 +139,11 @@ function scheduleIntervalDays(type) {
     return 15;
   }
 
-  // Monthly and custom schedules are handled separately.
   return null;
 }
 
 // --------------------------------------------------
-// Phone, money and display helpers
+// Phone and date display helpers
 // --------------------------------------------------
 
 function normalizePhone(raw) {
@@ -131,13 +160,28 @@ function normalizePhone(raw) {
   return null;
 }
 
-function money(value) {
-  return Math.round(Number(value || 0)).toLocaleString('en-US');
+function fmtDate(key) {
+  const [year, month, day] = String(key).split('-');
+
+  return `${day}-${month}-${year}`;
 }
 
-function fmtDate(key) {
-  const [y, m, d] = String(key).split('-');
-  return `${d}-${m}-${y}`;
+// --------------------------------------------------
+// SMS message template
+// No installment amount is included.
+// --------------------------------------------------
+
+function buildReminderMessage(dueDate) {
+  return (
+    `❤️স্বপ্নচূড়া❤️\n\n` +
+    `আসসালামুয়ালাইকুম\n` +
+    `সম্মানিত গ্রাহক, আপনার অবগতির জন্য জানাচ্ছি যে ` +
+    `আপনার কিস্তি জমা দেওয়ার তারিখ ${fmtDate(dueDate)}। ` +
+    `অনুগ্রহ করে নির্ধারিত তারিখে কিস্তি জমা দেওয়ার ` +
+    `জন্য অনুরোধ রইল।🥰\n\n` +
+    `ধন্যবাদান্তে,\n\n` +
+    `.                    স্বপ্নচূড়া                  .`
+  );
 }
 
 // --------------------------------------------------
@@ -157,13 +201,16 @@ async function sendSms(phone, message) {
     msg: message
   });
 
-  const response = await fetch('https://api.sms.net.bd/sendsms', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded'
-    },
-    body
-  });
+  const response = await fetch(
+    'https://api.sms.net.bd/sendsms',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body
+    }
+  );
 
   const responseText = await response.text();
 
@@ -172,12 +219,16 @@ async function sendSms(phone, message) {
   try {
     json = JSON.parse(responseText);
   } catch {
-    throw new Error('SMS provider returned an invalid response');
+    throw new Error(
+      'SMS provider returned an invalid response'
+    );
   }
 
   if (!response.ok || Number(json.error) !== 0) {
     throw new Error(
-      `SMS provider rejected request: ${JSON.stringify(json).slice(0, 400)}`
+      `SMS provider rejected request: ${
+        JSON.stringify(json).slice(0, 400)
+      }`
     );
   }
 
@@ -185,11 +236,15 @@ async function sendSms(phone, message) {
 }
 
 // --------------------------------------------------
-// Candidate calculation
+// Find installment reminders
 // --------------------------------------------------
 
 async function loadCandidates(today) {
-  const [memberSnap, loanSnap, collectionSnap] = await Promise.all([
+  const [
+    memberSnap,
+    loanSnap,
+    collectionSnap
+  ] = await Promise.all([
     db.collection('members').get(),
     db.collection('loans').get(),
     db.collection('collections').get()
@@ -205,8 +260,8 @@ async function loadCandidates(today) {
     ...doc.data()
   }));
 
-  // Pending and rejected collections are excluded.
-  // Approved and legacy records without status are included.
+  // Exclude pending and rejected collections.
+  // Other records are included, as in the previous code.
   const approved = collectionSnap.docs
     .map(doc => doc.data())
     .filter(collection =>
@@ -215,10 +270,9 @@ async function loadCandidates(today) {
     );
 
   const findMember = loan =>
-    members.find(
-      member =>
-        String(member.memberNo || '') ===
-        String(loan.memberNo || '')
+    members.find(member =>
+      String(member.memberNo || '') ===
+      String(loan.memberNo || '')
     ) || {};
 
   const candidates = [];
@@ -232,11 +286,18 @@ async function loadCandidates(today) {
       continue;
     }
 
-    const loanStatus = String(loan.status || '').toLowerCase();
+    const loanStatus = String(
+      loan.status || ''
+    ).toLowerCase();
 
     if (
-      ['rejected', 'closed', 'settled', 'paid', 'cancelled']
-        .includes(loanStatus)
+      [
+        'rejected',
+        'closed',
+        'settled',
+        'paid',
+        'cancelled'
+      ].includes(loanStatus)
     ) {
       continue;
     }
@@ -244,14 +305,16 @@ async function loadCandidates(today) {
     const loanKey = String(loan.loanNo || loan.id);
 
     // IMPORTANT:
-    // This uses the existing app's aggregate-payment assumption.
-    // It must be verified against real collection records before live SMS.
+    // Existing payment calculation is retained to determine
+    // which installment is next. Verify your real data schema
+    // before enabling live SMS.
     const paid = approved
       .filter(collection =>
         String(collection.loanNo || '') === loanKey
       )
       .reduce(
-        (sum, collection) => sum + Number(collection.amount || 0),
+        (sum, collection) =>
+          sum + Number(collection.amount || 0),
         0
       );
 
@@ -272,8 +335,8 @@ async function loadCandidates(today) {
       continue;
     }
 
-    // Existing calculation: installments inferred from total amount paid.
-    // Partial and excess payments require separate business-rule validation.
+    // Retain the previous method for inferring paid installments.
+    // This does not change the payment accounting rules.
     const paidInstallments = Math.min(
       count,
       Math.floor((paid + 0.00001) / per)
@@ -289,45 +352,84 @@ async function loadCandidates(today) {
       loan.installmentType || 'monthly'
     ).toLowerCase();
 
-    const startKey = String(loan.startDate).slice(0, 10);
+    const startKey = String(
+      loan.startDate
+    ).slice(0, 10);
 
     let due;
 
     if (installmentType === 'custom') {
-      // Current schema only establishes the first custom date.
-      if (paidInstallments > 0 || !loan.nextInstallmentDate) {
+      // Only the first custom date is supported by this schema.
+      if (
+        paidInstallments > 0 ||
+        !loan.nextInstallmentDate
+      ) {
         continue;
       }
 
-      due = String(loan.nextInstallmentDate).slice(0, 10);
+      due = String(
+        loan.nextInstallmentDate
+      ).slice(0, 10);
     } else if (installmentType === 'monthly') {
-      due = monthlyDueDate(startKey, nextIndex - 1);
+      due = monthlyDueDate(
+        startKey,
+        nextIndex - 1
+      );
     } else {
-      const interval = scheduleIntervalDays(installmentType);
+      const interval =
+        scheduleIntervalDays(installmentType);
 
       if (!interval) {
-        logger.warn('Unsupported installment type; skipping loan', {
-          loanNo: loanKey,
-          installmentType
-        });
+        logger.warn(
+          'Unsupported installment type; skipping loan',
+          {
+            loanNo: loanKey,
+            installmentType
+          }
+        );
+
         continue;
       }
 
-      due = plusDays(startKey, (nextIndex - 1) * interval);
+      due = plusDays(
+        startKey,
+        (nextIndex - 1) * interval
+      );
     }
 
-    // Validate the computed due date.
+    // Validate date format and calendar validity.
     if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) {
       logger.warn('Invalid due date; skipping loan', {
         loanNo: loanKey,
         due
       });
+
+      continue;
+    }
+
+    const [dueYear, dueMonth, dueDay] =
+      due.split('-').map(Number);
+
+    const checkDate = new Date(
+      Date.UTC(dueYear, dueMonth - 1, dueDay)
+    );
+
+    if (
+      checkDate.getUTCFullYear() !== dueYear ||
+      checkDate.getUTCMonth() !== dueMonth - 1 ||
+      checkDate.getUTCDate() !== dueDay
+    ) {
+      logger.warn('Impossible due date; skipping loan', {
+        loanNo: loanKey,
+        due
+      });
+
       continue;
     }
 
     // Reminder stages:
-    // 1. Two days before due date
-    // 2. On the due date
+    // 1. Two days before the due date.
+    // 2. On the due date.
     let stage;
 
     if (due === shiftDateKey(today, 2)) {
@@ -349,10 +451,14 @@ async function loadCandidates(today) {
     );
 
     if (!phone) {
-      logger.warn('Skipping loan with missing/invalid phone', {
-        loanNo: loanKey,
-        memberNo: loan.memberNo || ''
-      });
+      logger.warn(
+        'Skipping loan with missing/invalid phone',
+        {
+          loanNo: loanKey,
+          memberNo: loan.memberNo || ''
+        }
+      );
+
       continue;
     }
 
@@ -360,15 +466,9 @@ async function loadCandidates(today) {
       loan.memberName || member.name || 'সদস্য'
     ).trim();
 
-    const amount = Math.min(per, balance);
-
-    const stageText =
-      stage === 'two_days_before' ? 'আর ২ দিন পরে' : 'আজ';
-
-    const message =
-      `স্বপ্নচূড়া সমিতি: প্রিয় ${name}, আপনার ` +
-      `${money(amount)} টাকার কিস্তি ${fmtDate(due)} ` +
-      `তারিখে নির্ধারিত (${stageText})। অনুগ্রহ করে সময়মতো পরিশোধ করুন।`;
+    // The SMS has no name or installment amount.
+    // Only the institution name and due date are included.
+    const message = buildReminderMessage(due);
 
     candidates.push({
       loanId: loan.id,
@@ -380,7 +480,6 @@ async function loadCandidates(today) {
       name,
       due,
       stage,
-      amount,
       message
     });
   }
@@ -389,44 +488,52 @@ async function loadCandidates(today) {
 }
 
 // --------------------------------------------------
-// Duplicate prevention and delivery logs
+// Duplicate prevention and SMS logs
 // --------------------------------------------------
 
 function logId(candidate) {
-  return `${encodeURIComponent(candidate.loanId)}__${candidate.due}__${candidate.stage}`;
+  return (
+    `${encodeURIComponent(candidate.loanId)}` +
+    `__${candidate.due}__${candidate.stage}`
+  );
 }
 
 async function deliverOnce(candidate) {
-  const ref = db.collection('smsAlertLogs').doc(logId(candidate));
+  const ref = db
+    .collection('smsAlertLogs')
+    .doc(logId(candidate));
 
-  const reserved = await db.runTransaction(async transaction => {
-    const snap = await transaction.get(ref);
+  const reserved = await db.runTransaction(
+    async transaction => {
+      const snap = await transaction.get(ref);
 
-    if (
-      snap.exists &&
-      ['sent', 'sending'].includes(
-        String(snap.data().status || '')
-      )
-    ) {
-      return false;
+      if (
+        snap.exists &&
+        ['sent', 'sending'].includes(
+          String(snap.data().status || '')
+        )
+      ) {
+        return false;
+      }
+
+      transaction.set(ref, {
+        loanId: candidate.loanId,
+        loanNo: candidate.loanNo,
+        memberNo: candidate.memberNo,
+        phone: candidate.phone,
+        dueDate: candidate.due,
+        stage: candidate.stage,
+        message: candidate.message,
+        status: 'sending',
+        attempts:
+          Number(snap.data()?.attempts || 0) + 1,
+        updatedAt:
+          admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      return true;
     }
-
-    transaction.set(ref, {
-      loanId: candidate.loanId,
-      loanNo: candidate.loanNo,
-      memberNo: candidate.memberNo,
-      phone: candidate.phone,
-      dueDate: candidate.due,
-      stage: candidate.stage,
-      amount: candidate.amount,
-      message: candidate.message,
-      status: 'sending',
-      attempts: Number(snap.data()?.attempts || 0) + 1,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    return true;
-  });
+  );
 
   if (!reserved) {
     return 'skipped_duplicate';
@@ -441,17 +548,23 @@ async function deliverOnce(candidate) {
     await ref.set({
       status: 'sent',
       provider: 'sms.bd',
-      requestId: requestId == null ? null : String(requestId),
-      sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      requestId:
+        requestId == null ? null : String(requestId),
+      sentAt:
+        admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt:
+        admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
     return 'sent';
   } catch (error) {
     await ref.set({
       status: 'failed',
-      error: String(error.message || error).slice(0, 500),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      error: String(
+        error.message || error
+      ).slice(0, 500),
+      updatedAt:
+        admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
     throw error;
@@ -459,7 +572,7 @@ async function deliverOnce(candidate) {
 }
 
 // --------------------------------------------------
-// Daily scheduler
+// Daily scheduler — 9:00 AM Bangladesh time
 // --------------------------------------------------
 
 exports.installmentReminderScheduler = onSchedule({
@@ -471,7 +584,7 @@ exports.installmentReminderScheduler = onSchedule({
 }, async () => {
   const today = dhakaDateKey();
 
-  // Safe by default: do not send any messages.
+  // Safe by default: no SMS is sent unless enabled.
   if (SMS_ALERTS_ENABLED.value() !== 'true') {
     logger.info('SMS dry run only; no messages sent', {
       today,
@@ -480,15 +593,19 @@ exports.installmentReminderScheduler = onSchedule({
 
     const preview = await loadCandidates(today);
 
-    logger.info('SMS reminder preview count (no sends)', {
-      count: preview.length,
-      candidates: preview.map(candidate => ({
-        loanNo: candidate.loanNo,
-        memberNo: candidate.memberNo,
-        due: candidate.due,
-        stage: candidate.stage
-      }))
-    });
+    logger.info(
+      'SMS reminder preview count (no sends)',
+      {
+        count: preview.length,
+        candidates: preview.map(candidate => ({
+          loanNo: candidate.loanNo,
+          memberNo: candidate.memberNo,
+          due: candidate.due,
+          stage: candidate.stage,
+          message: candidate.message
+        }))
+      }
+    );
 
     return;
   }
@@ -538,5 +655,7 @@ exports._test = {
   shiftDateKey,
   normalizePhone,
   scheduleIntervalDays,
-  monthlyDueDate
+  monthlyDueDate,
+  fmtDate,
+  buildReminderMessage
 };
