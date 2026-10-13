@@ -1,17 +1,8 @@
 
 /**
  * Swapnochura Samiti — GitHub Actions SMS Runner
- *
- * Reminders:
- * - Two days before the installment date
- * - On the installment date
- *
- * Date priority:
- * 1. customInstallmentDate
- * 2. nextInstallmentDate
- *
- * Default mode: DRY RUN
- * SMS_ALERTS_ENABLED=false means no SMS will be sent.
+ * Reminders: 2 days before and on installment date.
+ * Default mode: DRY RUN.
  */
 
 const admin = require('firebase-admin');
@@ -21,9 +12,7 @@ const serviceAccount = JSON.parse(
 );
 
 if (!serviceAccount.project_id) {
-  throw new Error(
-    'Firebase service account secret is missing or invalid.'
-  );
+  throw new Error('Firebase service account secret is missing or invalid.');
 }
 
 admin.initializeApp({
@@ -31,12 +20,10 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+const FieldValue = admin.firestore.FieldValue;
 const SMS_API_KEY = process.env.SMS_BD_API_KEY;
 
-// --------------------------------------------------
 // Bangladesh date helpers
-// --------------------------------------------------
-
 function dateKey(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Dhaka',
@@ -45,21 +32,13 @@ function dateKey(date = new Date()) {
     day: '2-digit'
   }).formatToParts(date);
 
-  const p = Object.fromEntries(
-    parts.map(item => [item.type, item.value])
-  );
-
+  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}`;
 }
 
 function shiftDate(key, days) {
-  const [year, month, day] = String(key)
-    .split('-')
-    .map(Number);
-
-  const date = new Date(
-    Date.UTC(year, month - 1, day + days, 12)
-  );
+  const [y, m, d] = String(key).split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days, 12));
 
   return [
     date.getUTCFullYear(),
@@ -69,27 +48,19 @@ function shiftDate(key, days) {
 }
 
 function validDate(key) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key))) {
-    return false;
-  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key))) return false;
 
-  const [year, month, day] = key.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
 
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
+  return dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d;
 }
 
 function normalizeMemberNo(value) {
   return String(value || '').trim();
 }
-
-// --------------------------------------------------
-// Phone helper
-// --------------------------------------------------
 
 function normalizePhone(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
@@ -105,49 +76,40 @@ function normalizePhone(raw) {
   return null;
 }
 
-// --------------------------------------------------
-// SMS template
-// No customer name, installment amount or count.
-// --------------------------------------------------
+function maskPhone(phone) {
+  const s = String(phone || '');
+  return s.length >= 8
+    ? `${s.slice(0, 4)}******${s.slice(-3)}`
+    : 'masked';
+}
 
 function messageFor(due) {
   const [year, month, day] = due.split('-');
 
-  return (
-    `❤️স্বপ্নচূড়া❤️\n\n` +
-    `আসসালামুয়ালাইকুম\n` +
-    `সম্মানিত গ্রাহক, আপনার অবগতির জন্য জানাচ্ছি যে ` +
-    `আপনার কিস্তি জমা দেওয়ার তারিখ ${day}-${month}-${year}। ` +
-    `অনুগ্রহ করে নির্ধারিত তারিখে কিস্তি জমা দেওয়ার ` +
-    `জন্য অনুরোধ রইল।🥰\n\n` +
-    `ধন্যবাদান্তে,\n\n` +
-    `.                    স্বপ্নচূড়া                  .`
-  );
+  return `❤️স্বপ্নচূড়া❤️
+
+আসসালামুয়ালাইকুম
+সম্মানিত গ্রাহক, আপনার অবগতির জন্য জানাচ্ছি যে আপনার কিস্তি জমা দেওয়ার তারিখ ${day}-${month}-${year}। অনুগ্রহ করে নির্ধারিত তারিখে কিস্তি জমা দেওয়ার জন্য অনুরোধ রইল।🥰
+
+ধন্যবাদান্তে,
+
+.                    স্বপ্নচূড়া                  .`;
 }
 
-// --------------------------------------------------
-// Load reminder candidates
-// --------------------------------------------------
-
+// Load eligible reminders
 async function loadCandidates(today) {
   const [membersSnap, loansSnap] = await Promise.all([
     db.collection('members').get(),
     db.collection('loans').get()
   ]);
 
-  // Index members by memberNo for reliable lookup.
   const membersByNo = new Map();
 
   for (const doc of membersSnap.docs) {
     const member = doc.data();
-    const memberNo = normalizeMemberNo(member.memberNo);
+    const no = normalizeMemberNo(member.memberNo);
 
-    if (memberNo) {
-      membersByNo.set(memberNo, {
-        id: doc.id,
-        ...member
-      });
-    }
+    if (no) membersByNo.set(no, member);
   }
 
   const candidates = [];
@@ -163,30 +125,16 @@ async function loadCandidates(today) {
   };
 
   for (const doc of loansSnap.docs) {
-    const loan = {
-      id: doc.id,
-      ...doc.data()
-    };
+    const loan = { id: doc.id, ...doc.data() };
+    const status = String(loan.status || '').trim().toLowerCase();
 
-    const status = String(loan.status || '')
-      .trim()
-      .toLowerCase();
-
-    if (
-      [
-        'rejected',
-        'closed',
-        'settled',
-        'paid',
-        'cancelled'
-      ].includes(status)
-    ) {
+    if ([
+      'rejected', 'closed', 'settled', 'paid', 'cancelled'
+    ].includes(status)) {
       diagnostics.skippedClosedStatus++;
       continue;
     }
 
-    // Prefer customInstallmentDate.
-    // Fall back to nextInstallmentDate if custom date is empty.
     const rawDue =
       loan.customInstallmentDate ||
       loan.nextInstallmentDate ||
@@ -201,10 +149,7 @@ async function loadCandidates(today) {
 
     if (!validDate(due)) {
       diagnostics.invalidInstallmentDate++;
-      console.warn(
-        'Invalid installment date for loan:',
-        loan.loanNo || loan.id
-      );
+      console.warn('Invalid installment date for loan:', loan.loanNo || loan.id);
       continue;
     }
 
@@ -224,10 +169,7 @@ async function loadCandidates(today) {
 
     if (!member) {
       diagnostics.memberNotFound++;
-      console.warn(
-        'No matching memberNo for loan:',
-        loan.loanNo || loan.id
-      );
+      console.warn('No matching member for loan:', loan.loanNo || loan.id);
       continue;
     }
 
@@ -241,10 +183,7 @@ async function loadCandidates(today) {
 
     if (!phone) {
       diagnostics.missingOrInvalidPhone++;
-      console.warn(
-        'Missing or invalid phone for loan:',
-        loan.loanNo || loan.id
-      );
+      console.warn('Missing/invalid phone for loan:', loan.loanNo || loan.id);
       continue;
     }
 
@@ -259,26 +198,27 @@ async function loadCandidates(today) {
     });
   }
 
-  console.log(
-    'Candidate diagnostics:',
-    JSON.stringify(diagnostics, null, 2)
-  );
-
+  console.log('Candidate diagnostics:', JSON.stringify(diagnostics, null, 2));
   return candidates;
 }
 
-// --------------------------------------------------
-// SMS.NET.BD API
-// --------------------------------------------------
+// SMS provider errors
+class ProviderRejectedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ProviderRejectedError';
+  }
+}
 
 async function sendSms(phone, message) {
   if (!SMS_API_KEY) {
-    throw new Error('SMS_BD_API_KEY is missing.');
+    throw new ProviderRejectedError('SMS_BD_API_KEY is missing.');
   }
 
-  const response = await fetch(
-    'https://api.sms.net.bd/sendsms',
-    {
+  let response;
+
+  try {
+    response = await fetch('https://api.sms.net.bd/sendsms', {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded'
@@ -287,9 +227,16 @@ async function sendSms(phone, message) {
         api_key: SMS_API_KEY,
         to: phone,
         msg: message
-      })
-    }
-  );
+      }),
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch {
+    const error = new Error(
+      'Network error; SMS delivery status is unknown. Check provider reports.'
+    );
+    error.deliveryUnknown = true;
+    throw error;
+  }
 
   const responseText = await response.text();
   let result;
@@ -297,26 +244,31 @@ async function sendSms(phone, message) {
   try {
     result = JSON.parse(responseText);
   } catch {
-    throw new Error(
-      'SMS provider returned an invalid response.'
+    const error = new Error(
+      'Unreadable provider response; SMS delivery status is unknown.'
+    );
+    error.deliveryUnknown = true;
+    throw error;
+  }
+
+  if (Number(result?.error) !== 0) {
+    throw new ProviderRejectedError(
+      'SMS provider explicitly rejected the request.'
     );
   }
 
-  if (!response.ok || Number(result.error) !== 0) {
-    throw new Error(
-      `SMS provider rejected request: ${
-        JSON.stringify(result).slice(0, 300)
-      }`
+  if (!response.ok) {
+    const error = new Error(
+      `Provider HTTP ${response.status}; delivery status is unknown.`
     );
+    error.deliveryUnknown = true;
+    throw error;
   }
 
-  return result.data?.request_id ?? null;
+  return result?.data?.request_id ?? null;
 }
 
-// --------------------------------------------------
-// Duplicate prevention and SMS logs
-// --------------------------------------------------
-
+// Duplicate prevention and delivery logs
 async function deliverOnce(candidate) {
   const id =
     `${encodeURIComponent(candidate.loanId)}` +
@@ -324,100 +276,101 @@ async function deliverOnce(candidate) {
 
   const ref = db.collection('smsAlertLogs').doc(id);
 
-  const reserved = await db.runTransaction(
-    async transaction => {
-      const snap = await transaction.get(ref);
-      const previousStatus = String(
-        snap.data()?.status || ''
-      );
+  const reservation = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const previous = snap.exists ? snap.data() : {};
+    const status = String(previous.status || '');
 
-      if (
-        snap.exists &&
-        ['sent', 'sending'].includes(previousStatus)
-      ) {
-        return false;
-      }
-
-      transaction.set(ref, {
-        loanId: candidate.loanId,
-        loanNo: candidate.loanNo,
-        memberNo: candidate.memberNo,
-        phone: candidate.phone,
-        dueDate: candidate.due,
-        stage: candidate.stage,
-        message: candidate.message,
-        status: 'sending',
-        attempts: Number(snap.data()?.attempts || 0) + 1,
-        updatedAt:
-          admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      return true;
+    // Never automatically resend sent, sending, or unknown records.
+    if (['sent', 'sending', 'unknown'].includes(status)) {
+      return { allowed: false, status };
     }
-  );
 
-  if (!reserved) {
-    return 'skipped_duplicate';
+    // Retry only a previous explicit provider rejection.
+    if (status === 'failed' && previous.retrySafe !== true) {
+      return { allowed: false, status: 'manual_review' };
+    }
+
+    tx.set(ref, {
+      loanId: candidate.loanId,
+      loanNo: candidate.loanNo,
+      memberNo: candidate.memberNo,
+      phoneMasked: maskPhone(candidate.phone),
+      dueDate: candidate.due,
+      stage: candidate.stage,
+      status: 'sending',
+      attempts: Number(previous.attempts || 0) + 1,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    return { allowed: true };
+  });
+
+  if (!reservation.allowed) {
+    console.log(
+      `Reminder not sent automatically: loan=${candidate.loanNo}, status=${reservation.status}`
+    );
+
+    return reservation.status === 'sent'
+      ? 'skipped_duplicate'
+      : 'skipped_review';
   }
 
   try {
-    const requestId = await sendSms(
-      candidate.phone,
-      candidate.message
-    );
+    const requestId = await sendSms(candidate.phone, candidate.message);
 
     await ref.set({
       status: 'sent',
       provider: 'sms.net.bd',
-      requestId:
-        requestId == null ? null : String(requestId),
-      sentAt:
-        admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt:
-        admin.firestore.FieldValue.serverTimestamp()
+      requestId: requestId == null ? null : String(requestId),
+      sentAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      retrySafe: false
     }, { merge: true });
 
     return 'sent';
   } catch (error) {
+    const unknown = error.deliveryUnknown === true;
+    const safeToRetry =
+      error instanceof ProviderRejectedError &&
+      error.message !== 'SMS_BD_API_KEY is missing.';
+
     await ref.set({
-      status: 'failed',
-      error: String(error.message || error).slice(0, 500),
-      updatedAt:
-        admin.firestore.FieldValue.serverTimestamp()
+      status: unknown ? 'unknown' : 'failed',
+      retrySafe: safeToRetry,
+      error: String(error.message || error).slice(0, 300),
+      updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
 
     throw error;
   }
 }
 
-// --------------------------------------------------
 // Main runner
-// --------------------------------------------------
-
 async function main() {
   const today = dateKey();
   const candidates = await loadCandidates(today);
-
-  const enabled =
-    process.env.SMS_ALERTS_ENABLED === 'true';
+  const enabled = process.env.SMS_ALERTS_ENABLED === 'true';
 
   console.log(JSON.stringify({
     mode: enabled ? 'LIVE' : 'DRY RUN',
     date: today,
     candidateCount: candidates.length,
-    candidates: candidates.map(candidate => ({
-      loanNo: candidate.loanNo,
-      due: candidate.due,
-      stage: candidate.stage,
-      phone: candidate.phone
+    candidates: candidates.map(c => ({
+      loanNo: c.loanNo,
+      due: c.due,
+      stage: c.stage,
+      phone: maskPhone(c.phone)
     }))
   }, null, 2));
 
   if (!enabled) {
-    console.log(
-      'DRY RUN: No SMS sent. Verify dates and recipients first.'
-    );
+    console.log('DRY RUN: No SMS sent. Verify dates and recipients first.');
     return;
+  }
+
+  if (!SMS_API_KEY) {
+    throw new Error('SMS_BD_API_KEY is missing; refusing live run.');
   }
 
   let sent = 0;
@@ -428,15 +381,12 @@ async function main() {
     try {
       const result = await deliverOnce(candidate);
 
-      if (result === 'sent') {
-        sent++;
-      } else {
-        skipped++;
-      }
+      if (result === 'sent') sent++;
+      else skipped++;
     } catch (error) {
       failed++;
       console.error(
-        'SMS failed for loan:',
+        'SMS attempt failed/needs review for loan:',
         candidate.loanNo,
         String(error.message || error)
       );
@@ -451,15 +401,13 @@ async function main() {
     failed
   }, null, 2));
 
-  if (failed > 0) {
-    process.exitCode = 1;
-  }
+  if (failed > 0) process.exitCode = 1;
 }
 
 main()
   .then(() => admin.app().delete())
   .catch(async error => {
-    console.error(error);
+    console.error(String(error.message || error));
 
     try {
       await admin.app().delete();
